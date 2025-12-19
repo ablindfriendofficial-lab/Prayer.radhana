@@ -3,7 +3,6 @@ import { getAuth, signInWithCustomToken, signInAnonymously, createUserWithEmailA
 import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
 
 // --- CONFIGURATION ---
-// Configuration populated from user request
 const HARDCODED_CONFIG = {
   apiKey: "AIzaSyCF4sjV8ee5rsiGTRkmyEOvbylzKPBu9Xc",
   authDomain: "project-html-3634c.firebaseapp.com",
@@ -15,64 +14,68 @@ const HARDCODED_CONFIG = {
 
 let auth, db, currentUser;
 
-// --- DOM HELPERS ---
 const get = id => document.getElementById(id);
 const views = ['view-loading', 'view-auth', 'view-upload', 'view-projects', 'view-workspace', 'view-fullscreen'];
+
 function switchView(viewId) {
   views.forEach(v => {
     const el = get(v);
     if (el) el.classList.toggle('active', v === viewId);
   });
+  console.log("Switched to view:", viewId);
 }
 
 // --- INITIALIZATION ---
 async function initApp() {
+  console.log("Initializing Firebase...");
   try {
     const app = initializeApp(HARDCODED_CONFIG);
     auth = getAuth(app);
     db = getFirestore(app);
-  } catch (e) {
-    get('loading-status').innerText = "Init Error: " + e.message;
-    return;
-  }
+    console.log("Firebase initialized successfully.");
 
-  onAuthStateChanged(auth, (user) => {
-    if (user) {
-      currentUser = user;
-      const display = user.displayName || user.email || `User-${user.uid.slice(0,4)}`;
-      get('user-display').textContent = display;
-      
-      // If we are on loading or auth screen, go to upload
-      if (get('view-loading').classList.contains('active') || get('view-auth').classList.contains('active')) {
-         fetchProjects().then(() => switchView('view-upload'));
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        console.log("User is logged in:", user.uid);
+        currentUser = user;
+        get('user-display').textContent = user.email || `User-${user.uid.slice(0,4)}`;
+        fetchProjects().then(() => switchView('view-upload'));
+      } else {
+        console.log("No user logged in.");
+        currentUser = null;
+        switchView('view-auth');
       }
-    } else {
-      currentUser = null;
-      get('user-display').textContent = "Guest";
-      // Explicitly show auth screen for custom project
-      switchView('view-auth');
-    }
-  });
+    });
+  } catch (e) {
+    console.error("Firebase Initialization Error:", e);
+    get('loading-status').innerText = "Connection Error: " + e.message;
+  }
 }
 
-// --- FIRESTORE ---
+// --- FIRESTORE LOGIC ---
 function getCollectionRef() {
   if (!currentUser) return null;
-  // Using root level artifacts pattern but isolated to this project ID
+  // Simple path for your own Firebase project
   return collection(db, 'users', currentUser.uid, 'projects');
 }
 
 let projectsList = [];
 async function fetchProjects() {
   if (!currentUser) return;
+  console.log("Fetching projects...");
   try {
     const snap = await getDocs(getCollectionRef());
     projectsList = [];
     snap.forEach(d => projectsList.push({ id: d.id, ...d.data() }));
-    // Sort in memory (Rule 2: No complex queries)
     projectsList.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
     renderProjectsList();
-  } catch (e) { console.error("Fetch Error", e); }
+    console.log("Projects fetched:", projectsList.length);
+  } catch (e) { 
+    console.error("Firestore Fetch Error:", e); 
+    if(e.code === 'permission-denied') {
+        alert("Firestore Permission Denied! Please check your Security Rules in Firebase Console.");
+    }
+  }
 }
 
 // --- UI HELPERS ---
@@ -84,14 +87,14 @@ function renderProjectsList() {
     const div = document.createElement('div');
     div.className = 'project-card';
     div.innerHTML = `
-      <h3 style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(p.name)}</h3>
+      <h3>${escapeHtml(p.name)}</h3>
       <p style="font-size:0.8rem; color:var(--text-dim);">
          ${p.createdAt ? new Date(p.createdAt.seconds * 1000).toLocaleDateString() : 'Just now'}
       </p>
       <div style="display:flex; gap:5px; margin-top:auto;">
-        <button class="btn-base btn-primary action-launch" style="flex:1; font-size:0.8rem;">Run</button>
-        <button class="btn-base btn-secondary action-edit" style="flex:1; font-size:0.8rem;">Code</button>
-        <button class="btn-base btn-danger action-del" style="width:40px; padding:0;">🗑</button>
+        <button class="btn-base btn-primary action-launch">Run</button>
+        <button class="btn-base btn-secondary action-edit">Code</button>
+        <button class="btn-base btn-danger action-del">🗑</button>
       </div>
     `;
     div.querySelector('.action-launch').onclick = () => launchProjectData(p);
@@ -103,9 +106,50 @@ function renderProjectsList() {
 
 function escapeHtml(text) { return text ? text.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])) : ''; }
 
+// --- AUTH UI ---
+let authMode = 'login';
+function toggleAuthMode() {
+    authMode = authMode === 'login' ? 'signup' : 'login';
+    const isLogin = authMode === 'login';
+    get('auth-title').innerText = isLogin ? 'Welcome Back' : 'Create Account';
+    get('login-btn').style.display = isLogin ? 'flex' : 'none';
+    get('signup-btn').style.display = isLogin ? 'none' : 'flex';
+    get('auth-confirm').style.display = isLogin ? 'none' : 'block';
+    get('toggle-auth-mode').innerText = isLogin ? 'Need an account? Sign Up' : 'Have an account? Log In';
+}
+
+async function handleAuth() {
+    const email = get('auth-email').value;
+    const password = get('auth-password').value;
+    const errBox = get('auth-error');
+    errBox.style.display = 'none';
+
+    if(!email || !password) {
+        errBox.innerText = "Please fill all fields";
+        errBox.style.display='block';
+        return;
+    }
+
+    console.log(`Attempting ${authMode}...`);
+    try {
+        if (authMode === 'signup') {
+            const confirm = get('auth-confirm').value;
+            if(password !== confirm) throw new Error("Passwords do not match");
+            await createUserWithEmailAndPassword(auth, email, password);
+        } else {
+            await signInWithEmailAndPassword(auth, email, password);
+        }
+    } catch (e) {
+        console.error("Auth Error:", e);
+        errBox.innerText = e.message;
+        errBox.style.display='block';
+    }
+}
+
 // --- FILE OPS ---
 let uploadedFilesMap = new Map();
 let currentProject = { id: null };
+
 async function processFiles(files) {
   for (const f of Array.from(files)) {
     const name = f.name.toLowerCase();
@@ -132,10 +176,10 @@ function updateUploadStatus() {
     }
   });
   get('upload-actions').style.display = hasHtml ? 'flex' : 'none';
-  get('file-count-text').textContent = uploadedFilesMap.size > 0 ? `${uploadedFilesMap.size} files.` : "No files.";
+  get('file-count-text').textContent = uploadedFilesMap.size > 0 ? `${uploadedFilesMap.size} files ready.` : "No files.";
 }
 
-// --- EDITOR ---
+// --- EDITOR & RUN ---
 function openEditor(id) {
   switchView('view-workspace');
   get('save-changes-btn').style.display = id ? 'flex' : 'none';
@@ -162,83 +206,59 @@ function launchProjectData(p) {
     get('fullscreen-frame').srcdoc = `<!DOCTYPE html><html><head><style>${p.css||''}</style></head><body>${p.html||''}<script>${p.js||''}<\/script></body></html>`;
 }
 
-function runCurrentCode() {
-    const p = {
-        html: get('edit-html').value,
-        css: get('edit-css').value,
-        js: get('edit-js').value
-    };
-    launchProjectData(p);
+async function saveNewProject(name) {
+    console.log("Saving new project...");
+    try {
+        await setDoc(doc(getCollectionRef()), {
+            name, html: uploadedFilesMap.get('html'), css: uploadedFilesMap.get('css')||'', js: uploadedFilesMap.get('js')||'',
+            createdAt: serverTimestamp()
+        });
+        await fetchProjects();
+    } catch (e) { console.error("Save Error", e); }
 }
 
-// --- DB ACTIONS ---
-async function saveNewProject(name) {
-    await setDoc(doc(getCollectionRef()), {
-        name, html: uploadedFilesMap.get('html'), css: uploadedFilesMap.get('css')||'', js: uploadedFilesMap.get('js')||'',
-        createdAt: serverTimestamp()
-    });
-    await fetchProjects();
-}
 async function updateExistingProject(id, html, css, js) {
-    await updateDoc(doc(getCollectionRef(), id), { html, css, js });
-    await fetchProjects();
+    try {
+        await updateDoc(doc(getCollectionRef(), id), { html, css, js });
+        await fetchProjects();
+    } catch (e) { console.error("Update Error", e); }
 }
+
 async function deleteProject(id) {
     if(confirm("Delete?")) { await deleteDoc(doc(getCollectionRef(), id)); await fetchProjects(); }
 }
 
-// --- AUTH UI LOGIC ---
-let authMode='login';
-function toggleAuthMode() {
-    authMode = authMode==='login'?'signup':'login';
-    const isL = authMode==='login';
-    get('login-btn').style.display=isL?'flex':'none';
-    get('signup-btn').style.display=isL?'none':'flex';
-    get('auth-confirm').style.display=isL?'none':'block';
-}
-async function handleAuth() {
-    const e=get('auth-email').value, p=get('auth-password').value;
-    try {
-        if(authMode==='signup') {
-            if(p!==get('auth-confirm').value) throw new Error("Passwords mismatch");
-            await createUserWithEmailAndPassword(auth,e,p);
-        } else await signInWithEmailAndPassword(auth,e,p);
-    } catch(err) { get('auth-error').innerText=err.message; get('auth-error').style.display='block'; }
-}
-
-// --- EVENTS ---
+// --- EVENT BINDING ---
 window.onload = () => {
     initApp();
-    
-    // Auth
+
     get('toggle-auth-mode').onclick = toggleAuthMode;
     get('login-btn').onclick = handleAuth;
     get('signup-btn').onclick = handleAuth;
     get('logout-btn').onclick = () => signOut(auth);
 
-    // Nav
     get('back-upload').onclick = () => switchView('view-upload');
     get('back-projects-from-edit').onclick = () => switchView('view-projects');
     get('my-projects-btn').onclick = () => { fetchProjects(); switchView('view-projects'); };
     
-    // Exit Fullscreen
     get('exit-full').onclick = () => {
-         if (currentProject && currentProject.id) {
-             switchView('view-workspace');
-         } else if (get('edit-html').value) {
-             switchView('view-workspace');
-         } else {
-             switchView('view-projects');
-         }
+         if (currentProject && currentProject.id) switchView('view-workspace');
+         else if (get('edit-html').value) switchView('view-workspace');
+         else switchView('view-projects');
     };
 
-    // Main Actions
     get('local-preview-btn').onclick = () => openEditor(null);
     get('save-cloud-btn').onclick = () => get('modal-save').style.display='flex';
     get('modal-cancel').onclick = () => get('modal-save').style.display='none';
     get('modal-save-confirm').onclick = async () => {
-         if(get('project-name-input').value) { await saveNewProject(get('project-name-input').value); get('modal-save').style.display='none'; switchView('view-projects'); }
+         const name = get('project-name-input').value;
+         if(name) { 
+             await saveNewProject(name); 
+             get('modal-save').style.display='none'; 
+             switchView('view-projects'); 
+         }
     };
+
     get('save-changes-btn').onclick = async () => {
          if(currentProject.id) {
             get('save-changes-btn').innerText="Saving...";
@@ -247,13 +267,18 @@ window.onload = () => {
          }
     };
     
-    get('run-code-btn').onclick = runCurrentCode;
+    get('run-code-btn').onclick = () => {
+        launchProjectData({
+            html: get('edit-html').value,
+            css: get('edit-css').value,
+            js: get('edit-js').value
+        });
+    };
 
     get('clear-btn').onclick = () => { uploadedFilesMap.clear(); updateUploadStatus(); };
     get('file-input').onchange = e => processFiles(e.target.files);
     get('folder-input').onchange = e => processFiles(e.target.files);
     
-    // Drop zone
     const z = get('drop-zone');
     z.ondragover = e => { e.preventDefault(); z.style.border='2px solid var(--accent)'; };
     z.ondragleave = e => { z.style.border='1px solid var(--border)'; };
