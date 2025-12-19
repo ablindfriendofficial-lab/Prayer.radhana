@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Strict Project Viewer | Firebase Edition</title>
+  
+  <!-- Link to CSS -->
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- Fonts -->
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+  </style>
+</head>
+<body>
+
+  <!-- Settings Trigger (Hidden by default since we have hardcoded config now, but kept for fallback) -->
+  <div class="settings-trigger" id="open-settings-icon" style="display:none;">⚙️</div>
+
+  <!-- 1. LOADING -->
+  <div id="view-loading" class="view-section active center-screen">
+    <div style="text-align:center;">
+      <div class="spinner"></div>
+      <h3>Initializing...</h3>
+      <p id="loading-status" style="color:var(--text-dim); margin-top:10px;">Connecting to Project HTML...</p>
+    </div>
+  </div>
+
+  <!-- 2. AUTH -->
+  <div id="view-auth" class="view-section center-screen">
+    <div class="action-box">
+      <h2 id="auth-title">Welcome Back</h2>
+      <p style="color:var(--text-dim); margin-bottom:1rem; font-size:0.9rem;">Project HTML Database</p>
+
+      <input type="email" id="auth-email" placeholder="Email Address" autocomplete="email">
+      <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password">
+      <input type="password" id="auth-confirm" placeholder="Confirm Password (Sign Up)" style="display:none;" autocomplete="new-password">
+
+      <div id="auth-error" class="error-msg"></div>
+
+      <div style="display:flex; flex-direction:column; gap:10px; width:100%; margin-top: 10px;">
+        <button class="btn-base btn-primary" id="login-btn">Log In</button>
+        <button class="btn-base btn-secondary" id="signup-btn" style="display:none;">Create Account</button>
+      </div>
+
+      <button class="btn-text" id="toggle-auth-mode">Need an account? Sign Up</button>
+    </div>
+  </div>
+
+  <!-- 3. UPLOAD (DASHBOARD) -->
+  <div id="view-upload" class="view-section">
+    <header class="toolbar">
+      <div class="toolbar-group">
+        <span style="font-weight:600;" id="user-display">User</span>
+      </div>
+      <div class="toolbar-group">
+        <button class="btn-base btn-secondary" id="my-projects-btn">🗃️ My Projects</button>
+        <button class="btn-base btn-danger" id="logout-btn">Log Out</button>
+      </div>
+    </header>
+
+    <div class="center-screen" style="flex:1;">
+      <div class="action-box" id="drop-zone">
+        <h2>Upload Project</h2>
+        <p style="color:var(--text-dim); font-size: 0.9rem; margin-top: 5px;">Drag & Drop files (HTML, CSS, JS)</p>
+
+        <div style="display:flex; gap:10px; justify-content:center; margin:20px 0;">
+          <label class="btn-base btn-primary" style="cursor:pointer;">
+            + Add Files
+            <input type="file" id="file-input" multiple hidden>
+          </label>
+          <label class="btn-base btn-secondary" style="cursor:pointer;">
+            + Folder
+            <input type="file" id="folder-input" webkitdirectory directory multiple hidden>
+          </label>
+        </div>
+
+        <div id="file-list-preview" class="mini-list"></div>
+        <div id="file-count-text" class="status-text">No files selected</div>
+
+        <div id="upload-actions" style="display:none; flex-direction:column; gap:10px; width:100%; margin-top:20px;">
+          <button class="btn-base btn-success" id="save-cloud-btn">💾 Save to Cloud</button>
+          <button class="btn-base btn-primary" id="local-preview-btn">📝 Open Editor</button>
+          <button class="btn-base btn-secondary" id="clear-btn">Clear Selection</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. PROJECTS LIST -->
+  <div id="view-projects" class="view-section">
+    <header class="toolbar">
+      <button class="btn-base btn-secondary" id="back-upload">← Back</button>
+      <span class="toolbar-title">My Projects</span>
+      <div style="width: 80px;"></div>
+    </header>
+
+    <div class="scroll-container">
+      <p id="no-projects-msg" style="text-align:center; color:var(--text-dim); margin-top:40px; display:none;">No projects saved yet.</p>
+      <div id="projects-list-grid" class="projects-grid"></div>
+    </div>
+  </div>
+
+  <!-- 5. WORKSPACE (FULL EDITOR) -->
+  <div id="view-workspace" class="view-section">
+    <header class="toolbar">
+      <button class="btn-base btn-secondary" id="back-projects-from-edit">← Back</button>
+      
+      <div class="toolbar-group">
+        <button class="btn-base btn-primary" id="run-code-btn" style="margin-right:10px;">▶ Run Code</button>
+        <button class="btn-base btn-success" id="save-changes-btn">💾 Save</button>
+      </div>
+    </header>
+
+    <div class="editor-workspace">
+        <div class="editor-tabs">
+          <button class="tab-btn active" data-tab="html">index.html</button>
+          <button class="tab-btn" data-tab="css">style.css</button>
+          <button class="tab-btn" data-tab="js">script.js</button>
+        </div>
+
+        <div class="editor-pane">
+            <textarea id="edit-html" class="code-area" spellcheck="false" placeholder="<html>...</html>"></textarea>
+            <textarea id="edit-css" class="code-area" style="display:none;" spellcheck="false" placeholder="/* CSS styles */"></textarea>
+            <textarea id="edit-js" class="code-area" style="display:none;" spellcheck="false" placeholder="// JavaScript code"></textarea>
+        </div>
+    </div>
+  </div>
+
+  <!-- 6. FULLSCREEN VIEW -->
+  <div id="view-fullscreen" class="view-section">
+    <button class="exit-fullscreen" id="exit-full">✕ Back to Editor</button>
+    <iframe id="fullscreen-frame"></iframe>
+  </div>
+
+  <!-- SAVE MODAL -->
+  <div id="modal-save" class="modal-overlay">
+    <div class="action-box">
+      <h3>Name Project</h3>
+      <input type="text" id="project-name-input" placeholder="e.g. My Awesome Website">
+      <div style="display:flex; gap:10px; width:100%; margin-top:15px;">
+        <button class="btn-base btn-secondary" id="modal-cancel">Cancel</button>
+        <button class="btn-base btn-success" id="modal-save-confirm">Save Project</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Link to JS -->
+  <script type="module" src="script.js"></script>
+</body>
+</html>
+
+
