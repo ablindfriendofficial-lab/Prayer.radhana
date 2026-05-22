@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>INR Currency Identifier Web App</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f5f7fb;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 5px;
+            text-align: center;
+            color: #1e293b;
+        }
+
+        p.subtitle {
+            margin: 0 0 20px 0;
+            font-size: 0.9rem;
+            color: #64748b;
+            text-align: center;
+        }
+
+        .camera-container {
+            position: relative;
+            width: 100%;
+            max-width: 450px;
+            aspect-ratio: 4/3;
+            background-color: #0f172a;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* Scanning Viewport Box overlay */
+        .scanner-overlay {
+            position: absolute;
+            top: 15%;
+            left: 10%;
+            width: 80%;
+            height: 70%;
+            border: 2px dashed #06b6d4;
+            border-radius: 8px;
+            box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.55);
+            pointer-events: none;
+            box-sizing: border-box;
+        }
+
+        .scanner-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #06b6d4, transparent);
+            animation: scan 2.5s linear infinite;
+        }
+
+        @keyframes scan {
+            0% { top: 0%; }
+            50% { top: 100%; }
+            100% { top: 0%; }
+        }
+
+        .status-panel {
+            margin-top: 20px;
+            width: 100%;
+            max-width: 450px;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            box-sizing: border-box;
+            text-align: center;
+        }
+
+        #result-display {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: #0f172a;
+            margin-bottom: 5px;
+            min-height: 33px;
+        }
+
+        #confidence-display {
+            font-size: 0.9rem;
+            color: #0ea5e9;
+            font-weight: 600;
+            min-height: 20px;
+        }
+
+        #system-log {
+            font-size: 0.8rem;
+            color: #94a3b8;
+            margin-top: 10px;
+        }
+    </style>
+
+    <!-- Import TensorFlow.js Framework -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+    <!-- Import Pre-trained MobileNet Model Architecture -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
+</head>
+<body>
+
+    <h1>INR Currency Identifier</h1>
+    <p class="subtitle">Hold the banknote steadily inside the boundary frame</p>
+
+    <div class="camera-container">
+        <video id="webcam" autoplay playsinline muted></video>
+        <div class="scanner-overlay">
+            <div class="scanner-line"></div>
+        </div>
+    </div>
+
+    <div class="status-panel">
+        <div id="result-display">Initializing System...</div>
+        <div id="confidence-display"></div>
+        <div id="system-log">Loading camera permissions...</div>
+    </div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const resultDisplay = document.getElementById('result-display');
+        const confidenceDisplay = document.getElementById('confidence-display');
+        const systemLog = document.getElementById('system-log');
+        
+        let classifierModel = null;
+        let isProcessingLoopRunning = false;
+        let lastSpokenText = "";
+        let audioDebounceTimeout = null;
+
+        // Initialize Native Hardware Camera Interface
+        async function initializeCamera() {
+            try {
+                systemLog.innerText = "Accessing device camera streams...";
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: 'environment', // Request back-facing camera
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    },
+                    audio: false
+                });
+                
+                video.srcObject = stream;
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        systemLog.innerText = "Camera linked successfully.";
+                        resolve(video);
+                    };
+                });
+            } catch (err) {
+                resultDisplay.innerText = "Camera Access Error";
+                systemLog.innerText = "Please grant camera permissions and ensure you are serving over HTTPS.";
+                console.error(err);
+                throw err;
+            }
+        }
+
+        // Load TensorFlow Client-Side Vision Classifier Model
+        async function initializeClassifier() {
+            try {
+                systemLog.innerText = "Downloading client-side vision model (MobileNet)...";
+                classifierModel = await mobilenet.load({version: 1, alpha: 1.0});
+                systemLog.innerText = "Model engine armed and ready.";
+                resultDisplay.innerText = "Position Banknote";
+            } catch (err) {
+                resultDisplay.innerText = "Model Load Failed";
+                systemLog.innerText = "Failed to load components from CDN networks.";
+                console.error(err);
+            }
+        }
+
+        // Core Pipeline Classification Loop Engine
+        async function captureAndClassifyLoop() {
+            if (!classifierModel) return;
+
+            try {
+                // Generate instant prediction arrays out of the active video frame element
+                const predictions = await classifierModel.classify(video, 3);
+                
+                if (predictions && predictions.length > 0) {
+                    const primaryMatch = predictions[0];
+                    const className = primaryMatch.className.toLowerCase();
+                    const score = primaryMatch.probability;
+
+                    // Filter logic focusing on paper currency elements
+                    if (score > 0.45 && (className.includes('packet') || className.includes('wallet') || className.includes('paper') || className.includes('money') || className.includes('web'))) {
+                        
+                        /* NOTE ON EXTENDING THE RECOGNITION CLASSES: 
+                           When you transition from MobileNet to a custom trained weight map (YOLO/SSD),
+                           replace this section with your precise array indices (e.g., '10_Rupees', '100_Rupees') */
+                        
+                        const displayLabel = "Indian Rupee Note";
+                        resultDisplay.innerText = displayLabel;
+                        confidenceDisplay.innerText = `Confidence Vector: ${Math.round(score * 100)}%`;
+                        
+                        triggerVoiceFeedback(displayLabel);
+                    } else {
+                        // Reset dynamic values when visual frame context changes
+                        resultDisplay.innerText = "Scanning Area...";
+                        confidenceDisplay.innerText = "";
+                    }
+                }
+            } catch (loopError) {
+                console.error("Frame parsing loop exception:", loopError);
+            }
+
+            // Smooth schedule execution sync with device refresh cycles
+            if (isProcessingLoopRunning) {
+                requestAnimationFrame(captureAndClassifyLoop);
+            }
+        }
+
+        // Accessibility Audio Feedback Module (Web Speech Synth)
+        function triggerVoiceFeedback(textToSpeak) {
+            if (textToSpeak === lastSpokenText) return; // Prevent loop stuttering
+            
+            lastSpokenText = textToSpeak;
+            
+            // Clear prior scheduled audio streams
+            if (audioDebounceTimeout) clearTimeout(audioDebounceTimeout);
+            
+            audioDebounceTimeout = setTimeout(() => {
+                window.speechSynthesis.cancel(); 
+                
+                const voiceUtterance = new SpeechSynthesisUtterance(textToSpeak);
+                voiceUtterance.lang = 'en-IN'; // Targets localized English dialects if available natively
+                voiceUtterance.rate = 1.0;
+                
+                window.speechSynthesis.speak(voiceUtterance);
+            }, 300); // 300ms debounce buffer to stabilize predictions before speaking
+        }
+
+        // Global Bootstrapping Event Initialization
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                await initializeCamera();
+                await initializeClassifier();
+                
+                // Fire real-time recognition loop pipeline
+                isProcessingLoopRunning = true;
+                requestAnimationFrame(captureAndClassifyLoop);
+            } catch (bootError) {
+                console.error("System boot termination:", bootError);
+            }
+        });
+    </script>
+</body>
+</html>
